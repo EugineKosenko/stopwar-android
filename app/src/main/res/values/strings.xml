@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">Stop War</string>
+    <string name="run_label">Run</string>
+    <string name="stop_label">Stop</string>
+    <string name="url_title">URL</string>
+    <string name="jobs_title">Jobs</string>
+    <string name="success_title">Succ</string>
+    <string name="failure_title">Fail</string>
+    <string name="fail_rate_title">Rate</string>
+    <string name="no_jobs_now_info">No jobs now…</string>
+    <string name="total_jobs_limit_label">Total jobs limit:</string>
+    <string name="minus_button">-</string>
+    <string name="total_jobs_limit_default">1024</string>
+    <string name="plus_button">+</string>
+    <string name="change_button">Set</string>
+    <string name="jobs_target_limit_label">Jobs/Target limit:</string>
+    <string name="target_jobs_limit_default">256</string>
+    <string name="show_target_limit_label">Show Job/Target:</string>
+    <string name="show_target_limit_default">2</string>
+    <string name="press_run_to_start_info">Press \'RUN\' to start…</string>
+    <string name="receive_targets_info">Receive targets…</string>
+    <string name="run_targets_info">Run targets…</string>
+    <string name="targets_jobs_info">%d sec: %d targets, %d jobs</string>
+    <string name="check_targets_info">Check targets…</string>
+    <string name="receive_targets_net_error_info">Network error receiving targets…</string>
+    <string name="receive_targets_http_error_info">Receiving targets HTTP %d</string>
+</resources>

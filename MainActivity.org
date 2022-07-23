@@ -1,0 +1,743 @@
+#+title: Главная активность
+
+* Главный файл
+:PROPERTIES:
+:ID:       3ecf4163-2dbe-4f86-840e-0c418227132e
+:END:
+
+#+begin_src kotlin :noweb yes :tangle app/src/main/java/com/kosenko/stopwar/MainActivity.kt
+  package com.kosenko.stopwar
+
+  <<stopwar-android:MainActivity:Импорт>>
+
+  class MainActivity : AppCompatActivity() {
+      <<stopwar-android:MainActivity:Определения>>
+  }
+#+end_src
+
+* Запуск активности
+
+Функция ~onCreate~ определяет запуск активности
+
+#+begin_src kotlin :noweb yes :noweb-ref stopwar-android:MainActivity:Импорт
+  import androidx.appcompat.app.AppCompatActivity
+  import android.os.Bundle
+#+end_src
+
+#+begin_src kotlin :noweb yes :noweb-ref stopwar-android:MainActivity:Определения
+  override fun onCreate(savedInstanceState: Bundle?) {
+      super.onCreate(savedInstanceState)
+      <<stopwar-android:MainActivity:onCreate:Действия>>
+  }
+#+end_src
+
+* Запуск пользовательского интерфейса
+
+Интерфейс хранится в =xml=-файле описания и запускается с помощью /Связки/ (/Binding/), использование
+которой описано в [[https://developer.android.com/topic/libraries/view-binding#kotlin][документации]].
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import com.kosenko.stopwar.databinding.ActivityMainBinding
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  private lateinit var b: ActivityMainBinding
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Действия
+  b = ActivityMainBinding.inflate(layoutInflater)
+  setContentView(b.root)
+#+end_src
+
+* Обработка кнопки запуска-остановки
+
+#+begin_src kotlin :noweb yes :noweb-ref stopwar-android:MainActivity:onCreate:Действия
+  b.runButton.setOnClickListener {
+      if (Target.isRun) {
+          b.runButton.text = getString(R.string.run_label)
+          Target.isRun = false
+      } else {
+          b.runButton.text = getString(R.string.stop_label)
+          <<stopwar-android:MainActivity:onCreate:Запуск>>
+      }   
+  }
+#+end_src
+
+* Получение целей
+
+Сообщим о начале получения списка целей.
+
+#+begin_src kotlin :noweb yes :noweb-ref stopwar-android:MainActivity:Импорт
+  import android.widget.TextView
+  import android.view.View
+  import android.graphics.Typeface
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Запуск
+  b.statisticsLayout.removeViews(1, b.statisticsLayout.childCount - 1)
+  run {
+      val tv = TextView(baseContext)
+      tv.text = getString(R.string.receive_targets_info)
+      tv.textAlignment = View.TEXT_ALIGNMENT_CENTER
+      tv.setTypeface(null, Typeface.ITALIC)
+      b.statisticsLayout.addView(tv)
+  }
+#+end_src
+
+Получаем список целей и обрабатываем его
+
+#+begin_src kotlin :noweb yes :noweb-ref stopwar-android:MainActivity:Импорт
+  import okhttp3.Request
+  import okhttp3.Callback
+  import okhttp3.Call
+  import okio.IOException
+  import okhttp3.Response
+#+end_src
+
+#+begin_src kotlin :noweb yes :noweb-ref stopwar-android:MainActivity:onCreate:Запуск
+  val req = Request.Builder()
+      .url("http://stopwar.kosenko.info/targets").build()
+
+  val call = Target.httpClient.newCall(req)
+
+  call.enqueue(
+      object: Callback {
+          override fun onFailure(call: Call, e: IOException) {
+              <<stopwar-android:MainActivity:onCreate:Обработка-сетевой-ошибки>>
+          }
+
+          override fun onResponse(call: Call, response: Response) {
+              if (response.isSuccessful) {
+                  <<stopwar-android:MainActivity:onCreate:Обработка-целей>>
+              } else {
+                  <<stopwar-android:MainActivity:onCreate:Обработка-http-ошибки>>
+              }
+          }
+      }
+  )            
+#+end_src
+
+* Обработка целей
+
+Получим список =url= целей.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import org.json.JSONArray
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Обработка-целей
+  val urls = JSONArray(response.body?.string())
+#+end_src
+
+Строим список целей.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Обработка-целей
+  val tgs = mutableListOf<Target>()
+  (0 until urls.length()).forEach {
+        tgs.add(Target(urls[it].toString()))
+      tgs[it].spawn()
+  }
+#+end_src
+
+Запускаем работу.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Обработка-целей
+  Target.isRun = true
+#+end_src
+
+Сообщим о запуске целей.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Обработка-целей
+  run {
+      val tv = TextView(baseContext)
+      tv.text = getString(R.string.run_targets_info)
+      tv.textAlignment = View.TEXT_ALIGNMENT_CENTER
+      tv.setTypeface(null, Typeface.ITALIC)
+      lifecycleScope.launch(Dispatchers.Main) {
+          b.statisticsLayout.removeViews(1, b.statisticsLayout.childCount - 1)
+          b.statisticsLayout.addView(tv)
+      }
+  }
+#+end_src
+
+Здесь важно, что работать с контейнерами можно только в контексте главного потока, иначе возникает ошибка
+исполнения.
+
+Запустим цикл работы по целям. Глупость тут в том, что этот цикл нужно запустить в отдельном асинхронном
+потоке, иначе компилятор не позволит использовать =suspend=-функцию ~delay~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import androidx.lifecycle.lifecycleScope
+  import kotlinx.coroutines.launch
+  import kotlinx.coroutines.Dispatchers
+  import java.time.LocalDateTime
+#+end_src
+
+#+begin_src kotlin :noweb yes :noweb-ref stopwar-android:MainActivity:onCreate:Обработка-целей
+  lifecycleScope.launch(Dispatchers.IO) {
+      val bt = LocalDateTime.now()
+      while (Target.isRun || Target.jobsCount.get() > 0) {
+          <<stopwar-android:MainActivity:onCreate:Цикл-обработки-целей>>
+      }
+
+      b.infoText.text = getString(R.string.press_run_to_start_info)
+      val tv = TextView(baseContext)
+      tv.text = getString(R.string.no_jobs_now_info)
+      tv.textAlignment = View.TEXT_ALIGNMENT_CENTER
+      tv.setTypeface(null, Typeface.ITALIC)
+      withContext(Dispatchers.Main) {
+          b.statisticsLayout.removeViews(1, b.statisticsLayout.childCount - 1)
+          b.statisticsLayout.addView(tv)
+      }
+  }
+#+end_src
+
+** DONE Добавить обработку ошибок при получении списка целей
+CLOSED: [2022-07-23 сб 16:10]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 16:10]
+:END:
+
+** TODO Разделить цикл отчета и цикл обновления вызова целей
+:PROPERTIES:
+:ID:       1c196808-57f2-4725-9572-1855fea2a75f
+:END:
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-19 вт 19:30]
+:END:
+
+** DONE Изменить условие завершения циклов
+CLOSED: [2022-07-19 вт 19:30]
+:PROPERTIES:
+:ID:       9ea1c3a9-5cb1-46e3-b54b-a4eab45844f8
+:END:
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-19 вт 19:30]
+:END:
+
+* Цикл обработки целей
+
+Чтобы обеспечить стабильность сортировки, сделаем список ~ctgs~ (=Constant TarGeTS=) из копий всех целей,
+которые не будут меняться в процессе обработки.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Цикл-обработки-целей
+  val ctgs = mutableListOf<Target>()
+  tgs.forEach { ctgs.add(it.copy()) }
+#+end_src
+
+Изменяем значение индикатора информации о целях и генераторах.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import java.time.Duration
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Цикл-обработки-целей
+  b.infoText.text = getString(
+      R.string.targets_jobs_info,
+      Duration.between(bt, LocalDateTime.now()).seconds,
+      ctgs.count(),
+      Target.jobsCount.get())
+#+end_src
+
+Сортируем список целей в ~stgs~ (=Sorted TarGeTS=).
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Цикл-обработки-целей
+  val stgs = ctgs.sortedWith {
+      t1: Target, t2: Target ->
+          when {
+              t1.jobsCount.get() < t2.jobsCount.get() -> 1
+              t1.jobsCount.get() > t2.jobsCount.get() -> -1
+              else -> when {
+                  t1.failRate() < t2.failRate() -> -1
+                  t1.failRate() > t2.failRate() -> 1
+                  else -> when {
+                      t1.successCount.get() < t2.successCount.get() -> 1
+                      t1.successCount.get() > t2.successCount.get() -> -1
+                      else -> 0
+                      }
+              }
+          }
+  }
+#+end_src
+
+Выводим информацию о целях. Это действие затрагивает таблицу результатов, а значит, оно должно
+выполняться в контексте главного потока. Кроме того, если в результате таблица будет пустой, нужно
+добавить строку-индикатор, что работа на самом деле идет.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import kotlinx.coroutines.withContext
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Цикл-обработки-целей
+  withContext(Dispatchers.Main) {
+      b.statisticsLayout.removeViews(1, b.statisticsLayout.childCount - 1)
+      stgs.forEach {
+          if (it.jobsCount.get() >= Target.showTargetLimit.get()) {
+              val r = it.newRow(baseContext)
+              withContext(Dispatchers.Main) {
+                  b.statisticsLayout.addView(r)
+              }
+          }
+      }
+
+      if (b.statisticsLayout.childCount == 1) {
+          val tv = TextView(baseContext)
+          tv.text = getString(R.string.check_targets_info)
+          tv.textAlignment = View.TEXT_ALIGNMENT_CENTER
+          tv.setTypeface(null, Typeface.ITALIC)
+          b.statisticsLayout.addView(tv)
+      }
+  }
+#+end_src
+
+Обновим работу по целям без генераторов.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Цикл-обработки-целей
+  if (Target.isRun) {
+      tgs.forEach {
+          if (it.jobsCount.get() == 0) {
+              it.spawn()
+          }
+      }
+  }
+#+end_src
+
+Это действие нужно вынести в отдельный цикл со своей задержкой (см. [[id:1c196808-57f2-4725-9572-1855fea2a75f][Разделить цикл отчета и цикл
+обновления вызова целей]]).
+
+Выполним задержку (см. [[id:c51059d3-348b-44a8-8893-cd72c60363af][Добавить работу с параметрами]]).
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import kotlinx.coroutines.delay
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Цикл-обработки-целей
+  delay(1000)
+#+end_src
+
+** DONE Изменить формат вывода времени
+CLOSED: [2022-07-19 вт 20:37]
+:HISTORY:
+- State "DONE"       from "RUN"        [2022-07-19 вт 20:37]
+- State "RUN"        from "TODO"       [2022-07-19 вт 19:30]
+:END:
+
+Проще выводить текущее время, но даже тогда нужно избавиться от даты. Лучше сделать вывод времени,
+прошедшего с начала обработки целей.
+
+** DONE Сделать сортировку проще и атомарнее
+CLOSED: [2022-07-23 сб 15:33]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 15:33]
+:END:
+
+Сортировка целей производится с помощью сложной функции сортировки, в процессе вычисления которой
+значения полей статистики цели может внезапно измениться. По идее, это вычисление нужно защитить
+мьютексом.
+
+** COMMENT Увеличение и уменьшение значения в редакторе
+
+Выполняется по нажатию на кнопки ~-~ и ~+~. Вначале определим эти действия как обычные обработчики
+~onClick~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  public fun onShowTargetLimitPlusClick(v: View) {
+      b.showTargetLimitEditor.setText(
+          if (b.showTargetLimitEditor.text.isEmpty()) {
+              3
+          } else {
+              b.showTargetLimitEditor.text.toString().toInt() + 1
+          }.toString()
+      )
+  }
+
+  public fun onShowTargetLimitMinusClick(v: View) {
+      b.showTargetLimitEditor.setText(
+          if (b.showTargetLimitEditor.text.isEmpty()) {
+              1
+          } else {
+              val v = b.showTargetLimitEditor.text.toString().toInt()
+              if (v == 0) { 0 } else { v - 1 }
+          }.toString()
+      )
+  }
+#+end_src
+
+* COMMENT Длинные операции
+
+По длинному нажатию на кнопки наращивания или уменьшения значения необходимо циклическое изменение. Это
+можно сделать [[https://ru.stackoverflow.com/questions/863952/%D0%9A%D0%B0%D0%BA-%D1%81%D0%B4%D0%B5%D0%BB%D0%B0%D1%82%D1%8C-%D0%B4%D0%BE%D0%BB%D0%B3%D0%BE%D0%B5-%D0%BD%D0%B0%D0%B6%D0%B0%D1%82%D0%B8%D0%B5-%D0%BA%D0%BD%D0%BE%D0%BF%D0%BA%D0%B8-%D0%B2-android-studio][с помощью потоков]] и [[https://ru.stackoverflow.com/questions/762133/%d0%9f%d0%be%d0%ba%d0%b0-%d0%ba%d0%bd%d0%be%d0%bf%d0%ba%d0%b0-%d0%bd%d0%b0%d0%b6%d0%b0%d1%82%d0%b0-%d0%bf%d0%be%d0%b2%d1%82%d0%be%d1%80%d1%8f%d1%82%d1%8c-%d0%b2%d1%8b%d0%bf%d0%be%d0%bb%d0%bd%d0%b5%d0%bd%d0%b8%d0%b5-%d0%be%d0%bf%d1%80%d0%b5%d0%b4%d0%b5%d0%bb%d0%b5%d0%bd%d0%bd%d0%be%d0%b3%d0%be-%d0%bc%d0%b5%d1%82%d0%be%d0%b4%d0%b0-%d0%9a%d0%b0%d0%ba-%d1%81%d0%b4%d0%b5%d0%bb%d0%b0%d1%82%d1%8c/762197#762197][с помощью асинхронных вычислений]]. Вариант с асинхронными вычислениями
+кажется проще, хотя и он запутан.
+
+* COMMENT Включение кнопки задания параметра
+
+Кнопка задания параметра ~Set~ включается, только если значение в редакторе параметра изменилось.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import android.text.TextWatcher
+  import android.text.Editable
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Действия
+  b.totalJobsLimitEditor.addTextChangedListener(
+      object: TextWatcher {
+          override fun afterTextChanged(p0: Editable?) {
+              //TODO("Not yet implemented")
+          }
+
+          override fun beforeTextChanged(p0: CharSequence?, p1: Int, p2: Int, p3: Int) {
+              //TODO("Not yet implemented")
+          }
+
+          override fun onTextChanged(p0: CharSequence?, p1: Int, p2: Int, p3: Int) {
+              b.totalJobsLimitChangeButton.isEnabled = true
+          }
+      }
+  )
+#+end_src
+
+* Редактирование параметров
+:PROPERTIES:
+:ID:       c51059d3-348b-44a8-8893-cd72c60363af
+:END:
+:HISTORY:
+- State "WAIT"       from "RUN"        [2022-07-21 чт 19:23]
+- State "RUN"        from "WAIT"       [2022-07-21 чт 17:44]
+- State "WAIT"       from "RUN"        [2022-07-19 вт 20:55]
+- State "RUN"        from "TODO"       [2022-07-19 вт 20:37]
+:END:
+
+Определим редактор каждого параметра как /Спиннер/ (/Spinner/). Он включает в себя следующие следующие
+элементы:
+
+- редактор значения (=Editor=);
+- кнопки уменьшения (=Minus=) и увеличения (=Plus=);
+- кнопку установки значения (=Set=).
+
+Функция ~setSpinner~ инициализирует обработчики всех событий, связанных со спиннером. Она принимает
+четыре перечисленных компонента и значение параметра по умолчанию ~default~. Проинициализируем все
+параметры.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Действия
+  setSpinner(
+      b.totalJobsLimitMinusButton,
+      b.totalJobsLimitPlusButton,
+      b.totalJobsLimitEditor,
+      Target.TOTAL_JOBS_LIMIT_DEFAULT,
+      b.totalJobsLimitSetButton,
+  )
+  setSpinner(
+      b.targetJobsLimitMinusButton,
+      b.targetJobsLimitPlusButton,
+      b.targetJobsLimitEditor,
+      Target.TARGET_JOBS_LIMIT_DEFAULT,
+      b.targetJobsLimitSetButton,
+  )
+  setSpinner(
+      b.showTargetLimitMinusButton,
+      b.showTargetLimitPlusButton,
+      b.showTargetLimitEditor,
+      Target.SHOW_TARGET_LIMIT_DEFAULT,
+      b.showTargetLimitSetButton,
+  )
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import android.widget.Button
+  import android.widget.EditText
+  import android.annotation.SuppressLint
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  @SuppressLint("ClickableViewAccessibility")
+  private fun setSpinner(minusButton: Button,
+                         plusButton: Button,
+                         editor: EditText,
+                         default: UInt,
+                         setButton: Button) {
+      minusButton.setOnTouchListener(OnSpinListener(this, spinMinus(editor, default)))
+      plusButton.setOnTouchListener(OnSpinListener(this, spinPlus(editor, default)))
+      editor.addTextChangedListener(OnTextChangeListener(setButton))
+  }
+#+end_src
+
+** Кнопки прокрутки
+
+Для подключения кнопок прокрутки используется специальный класс-слушатель ~OnSpinListener~, который, в
+свою очередь, использует специальные генераторы блока обновления ~spinMinus~ и ~spinPlus~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import android.os.Handler
+  import android.view.MotionEvent
+  import android.os.Looper
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  class OnSpinListener(private val activity: MainActivity, private val spin: () -> Unit): View.OnTouchListener {
+      private var h: Handler? = null
+
+      @SuppressLint("ClickableViewAccessibility")
+      override fun onTouch(v: View?, e: MotionEvent?): Boolean {
+          when (e!!.action and MotionEvent.ACTION_MASK) {
+              MotionEvent.ACTION_DOWN -> {
+                  if (activity.currentFocus != null) {
+                      val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                      imm.hideSoftInputFromWindow(activity.currentFocus!!.windowToken, 0)
+                      activity.currentFocus!!.clearFocus()
+                  }
+                
+                  if (h == null) {
+                      h = Handler(Looper.getMainLooper())
+                      h!!.postDelayed(call, 250)
+                  }
+              }
+              MotionEvent.ACTION_UP -> {
+                  if (h != null) {
+                      h!!.removeCallbacks(call)
+                      h = null
+                  }
+              }
+          }
+          return true
+      }
+
+      private fun loop() {
+          spin()
+          if (h != null) {
+            h!!.postDelayed(call, 50)
+          }
+      }
+
+      private val call = { loop() }
+  }
+#+end_src
+
+Логика этого слушателя в том, чтобы по нажатию на кнопку (~ACTION_DOWN~) запустить с задержкой с помощью
+исполняемого блока ~call~ рекурсивную функцию-цикл ~loop~, которая выполняет действие ~spin~, заданное
+конструктором класса, а потом опять вызывает себя с некоторой задержкой. По отпусканию кнопки
+(~ACTION_UP~) разработчик выключается и уничтожается.
+
+В качестве функции прокрутки ~spin~ используются две очевидные функции ~spinMinus~ и ~spinPlus~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  private fun spinMinus(e: EditText, d: UInt): () -> Unit {
+      return {
+          e.setText(
+              if (e.text.isEmpty()) {
+                  d - 1U
+              } else {
+                  val v = e.text.toString().toUInt()
+                  if (v == 0U) { 0U } else { v - 1U }
+              }.toString()
+          )
+      }
+  }
+
+  private fun spinPlus(e: EditText, d: UInt): () -> Unit {
+      return {
+          e.setText(
+              if (e.text.isEmpty()) {
+                  d + 1U
+              } else {
+                  e.text.toString().toUInt() + 1U
+              }.toString()
+          )
+      }
+  }
+#+end_src
+
+Эти функции, которые также можно назвать ~spinDec~ и ~spinInc~, не только выполняют простое
+арифметическое действие с преобразованием типа, но и контролируют важные инварианты, а именно:
+
+- если поле редактора пусто (пользователь удалил все цифры), то кнопка считает, что в редакторе хранится
+  значение по умолчанию, от которого и выполняет шаг в заданном направлении;
+- кнопка уменьшения контролирует дополнительно, чтобы значение не оказалось меньше нуля; так как значения
+  параметров это всегда беззнаковые целые, уменьшение от нуля вызвало бы переполнение.
+
+Дополнительный контроль кнопки увеличения на максимальное значение не предусмотрен.
+
+** Включение кнопки установки
+
+Изначально кнопка установки параметра заблокирована, так как значение параметра совпадает со значением
+редактора. Как только редактор изменяет значение, кнопка установки становится доступной.
+
+Это поведение реализует слушатель ~OnTextChangeListener~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import android.text.TextWatcher
+  import android.text.Editable
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  class OnTextChangeListener(private val setButton: Button): TextWatcher {
+      override fun afterTextChanged(p0: Editable?) {
+          // No actions
+      }
+    
+      override fun beforeTextChanged(p0: CharSequence?, p1: Int, p2: Int, p3: Int) {
+          // No actions
+      }
+    
+      override fun onTextChanged(p0: CharSequence?, p1: Int, p2: Int, p3: Int) {
+          setButton.isEnabled = true
+      }
+  }
+#+end_src
+
+Кнопка установки параметра записывает значение из редактора в параметр, после чего блокирует сама
+себя. Это действие также однообразно, и его можно было бы собрать в один обработчик для всех кнопок,
+однако для простоты сначала реализуем эти действия как три разных обработчика.
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  fun onTotalJobsLimitSetClick(v: View) {
+      hideKeyboard()
+      Target.totalJobsLimit.set(
+          if (b.totalJobsLimitEditor.text.isEmpty()) {
+              Target.TOTAL_JOBS_LIMIT_DEFAULT.toInt()
+          } else {
+              b.totalJobsLimitEditor.text.toString().toInt()
+          }
+      )
+      v.isEnabled = false
+  }
+
+  fun onTargetJobsLimitSetClick(v: View) {
+      hideKeyboard()
+      Target.targetJobsLimit.set(
+          if (b.targetJobsLimitEditor.text.isEmpty()) {
+              256
+          } else {
+              b.targetJobsLimitEditor.text.toString().toInt()
+          }
+      )
+      v.isEnabled = false
+  }
+
+  fun onShowTargetLimitSetClick(v: View) {
+      hideKeyboard()
+      Target.showTargetLimit.set(
+          if (b.showTargetLimitEditor.text.isEmpty()) {
+              2
+          } else {
+              b.showTargetLimitEditor.text.toString().toInt()
+          }
+      )
+      v.isEnabled = false
+  }
+#+end_src
+
+* Убирать цифровую клавиатуру при установке параметра
+CLOSED: [2022-07-23 сб 11:10]
+:HISTORY:
+- State "DONE"       from "RUN"        [2022-07-23 сб 11:10]
+- State "RUN"        from "DONE"       [2022-07-23 сб 11:10]
+- State "DONE"       from "TODO"       [2022-07-23 сб 11:10]
+:END:
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Импорт
+  import android.content.Context
+  import android.view.inputmethod.InputMethodManager
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:Определения
+  private fun hideKeyboard() {
+      if (currentFocus != null) {
+          val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+          imm.hideSoftInputFromWindow(currentFocus!!.windowToken, 0)
+          currentFocus!!.clearFocus()
+      }
+  }
+#+end_src
+
+* DONE Добавить выравнивание вправо в таблице
+CLOSED: [2022-07-23 сб 11:15]
+:HISTORY:
+- State "DONE"       from "RUN"        [2022-07-23 сб 11:15]
+- State "RUN"        from "TODO"       [2022-07-23 сб 11:11]
+:END:
+
+* DONE Вынести строки в константы и привести имена констант к соглашениям
+CLOSED: [2022-07-23 сб 12:22]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 12:22]
+:END:
+* DONE Перевести на украинский язык
+CLOSED: [2022-07-23 сб 12:22]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 12:22]
+:END:
+* TODO Добавить информационные экраны
+* DONE Усложнить обработку параметров и завершение
+CLOSED: [2022-07-23 сб 11:03]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 11:03]
+:END:
+
+Простейший вариант --- блокировать изменение параметров во время работы. Более сложно, автоматически
+править параметры в момент обновления.
+
+При завершении системе нужно "время выбега", чтобы завершить работу всех генераторов. Принудительная
+остановка приведет к тому, что "оборванные" генераторы продолжат изменять статистику. Нужен особый
+признак, по которому генератор не будет работать со статистикой после принудительного завершения.
+
+* TODO Реализовать обновление списка целей по времени
+* DONE Переименовать =Change= в =Set=
+CLOSED: [2022-07-23 сб 12:36]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 12:36]
+:END:
+* DONE Вынести умолчания для параметров в константы
+CLOSED: [2022-07-23 сб 12:46]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 12:46]
+:END:
+* DONE Сделать согласованную сортировку
+CLOSED: [2022-07-23 сб 15:33]
+:HISTORY:
+- State "DONE"       from "TODO"       [2022-07-23 сб 15:33]
+:END:
+
+В момент сортировки значения атрибутов статистики цели меняются, в результате чего она становится
+ненадежной и приводит к завершению приложения.
+
+* TODO Добавить обработку ошибки запроса
+
+Ошибка может возникнуть в трех местах:
+
+- при подключению к серверу (фунция ~onFailure~);
+- в случае неправильного =http=-ответа, когда ~response.isSuccessful~ оказывется ложным, а
+  ~response.code~ в таком случае содержит код ошибки.
+- неправильный формат =json=-данных.
+
+Сейчас можно быстро реализовать обработку только первых двух ошиибок, третья требует более детальной
+проработки.
+
+** Обработка сетевой ошибки
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Обработка-сетевой-ошибки
+  lifecycleScope.launch(Dispatchers.Main) {
+      b.statisticsLayout.removeViews(1, b.statisticsLayout.childCount - 1)
+      val tv = TextView(baseContext)
+      tv.text = getString(R.string.receive_targets_net_error_info)
+      tv.textAlignment = View.TEXT_ALIGNMENT_CENTER
+      tv.setTypeface(null, Typeface.ITALIC)
+      b.statisticsLayout.addView(tv)
+      b.runButton.text = getString(R.string.run_label)      
+  }
+#+end_src
+
+** Обработка =http=-ошибки
+
+#+begin_src kotlin :noweb-ref stopwar-android:MainActivity:onCreate:Обработка-http-ошибки
+  lifecycleScope.launch(Dispatchers.Main) {
+      b.statisticsLayout.removeViews(1, b.statisticsLayout.childCount - 1)
+      val tv = TextView(baseContext)
+      tv.text = getString(R.string.receive_targets_http_error_info, response.code)
+      tv.textAlignment = View.TEXT_ALIGNMENT_CENTER
+      tv.setTypeface(null, Typeface.ITALIC)
+      b.statisticsLayout.addView(tv)
+      b.runButton.text = getString(R.string.run_label)
+  }
+#+end_src
+
+** TODO Обработка ошибки данных

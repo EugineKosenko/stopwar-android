@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">Зупиніть війну</string>
+    <string name="run_label">Запустити</string>
+    <string name="stop_label">Завершити</string>
+    <string name="url_title">URL</string>
+    <string name="jobs_title">Завд.</string>
+    <string name="success_title">Усп.</string>
+    <string name="failure_title">Невд.</string>
+    <string name="fail_rate_title">% невд</string>
+    <string name="no_jobs_now_info">Немає завдань…</string>
+    <string name="total_jobs_limit_label">Всього завд.:</string>
+    <string name="minus_button">-</string>
+    <string name="total_jobs_limit_default">1024</string>
+    <string name="plus_button">+</string>
+    <string name="change_button">Задати</string>
+    <string name="jobs_target_limit_label">Завдань/ціль:</string>
+    <string name="target_jobs_limit_default">256</string>
+    <string name="show_target_limit_label">Показ. ціль:</string>
+    <string name="show_target_limit_default">2</string>
+    <string name="press_run_to_start_info">Натисніть \'Запустити\' щоб розпочати…</string>
+    <string name="receive_targets_info">Отримуємо цілі…</string>
+    <string name="run_targets_info">Запускаємо цілі…</string>
+    <string name="targets_jobs_info">%d сек: %d цілей, %d завдань</string>
+    <string name="check_targets_info">Перевіряємо цілі…</string>
+    <string name="receive_targets_net_error_info">Помилка мережі при отриманні цілей…</string>
+    <string name="receive_targets_http_error_info">Помилка HTTP %d при отриманні цілей…</string>
+</resources>

